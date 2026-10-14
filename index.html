@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="utf-8">
+  <title>基站雷達圖分析</title>
+
+  <script>
+    window.onerror = function(msg, url, line) {
+      setTimeout(function() {
+        var sb = document.getElementById('status-bar');
+        if (sb) {
+          sb.style.background = '#ffebee';
+          sb.style.color = '#c62828';
+          sb.innerText = '[JS 錯誤] ' + msg + ' (第 ' + line + ' 行)';
+        }
+      }, 100);
+      return false;
+    };
+  </script>
+
+  <script src="https://cdn.jsdelivr.net/gh/tableau/extensions-api/lib/tableau.extensions.1.latest.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/echarts/5.4.3/echarts.min.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 4px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #fff; }
+    #status-bar { font-size: 12px; color: #333; margin-bottom: 4px; padding: 5px 10px; background: #e3f2fd; border-radius: 4px; border-left: 4px solid #1976d2; font-weight: 500; }
+    .radar-grid { display: flex; width: 100%; height: calc(95vh - 32px); gap: 8px; }
+    .radar-card { flex: 1; height: 100%; min-width: 0; border: 1px solid #e0e0e0; border-radius: 8px; padding: 2px; background: #fff; }
+  </style>
+</head>
+<body>
+  <div id="status-bar">狀態：正在連線 Tableau...</div>
+  <div class="radar-grid">
+    <div id="chart-l1" class="radar-card"></div>
+    <div id="chart-l2" class="radar-card"></div>
+    <div id="chart-l3" class="radar-card"></div>
+  </div>
+
+  <script>
+    var statusBar = document.getElementById('status-bar');
+
+    var chartL1 = echarts.init(document.getElementById('chart-l1'));
+    var chartL2 = echarts.init(document.getElementById('chart-l2'));
+    var chartL3 = echarts.init(document.getElementById('chart-l3'));
+
+    tableau.extensions.initializeAsync().then(function() {
+      var dashboard = tableau.extensions.dashboardContent.dashboard;
+      var feedSheet = null;
+
+      for (var i = 0; i < dashboard.worksheets.length; i++) {
+        if (dashboard.worksheets[i].name === 'Radar_Data_Feed') {
+          feedSheet = dashboard.worksheets[i];
+          break;
+        }
+      }
+
+      if (!feedSheet) {
+        statusBar.style.background = '#fff3e0';
+        statusBar.style.color = '#e65100';
+        statusBar.innerText = '[警告] 找不到名為 Radar_Data_Feed 的工作表！';
+        return;
+      }
+
+      function render() {
+        feedSheet.getSummaryDataAsync().then(function(sumdata) {
+          updateAllRadars(sumdata);
+        }).catch(function(err) {
+          statusBar.innerText = '[錯誤] 讀取數據失敗：' + err.message;
+        });
+      }
+
+      render();
+      feedSheet.addEventListener(tableau.TableauEventType.FilterChanged, render);
+
+      dashboard.getParametersAsync().then(function(params) {
+        for (var p = 0; p < params.length; p++) {
+          params[p].addEventListener(tableau.TableauEventType.ParameterChanged, render);
+        }
+      });
+    }).catch(function(err) {
+      statusBar.innerText = '[錯誤] Tableau Extension 初始化失敗：' + err.message;
+    });
+
+    function cleanStr(s) {
+      if (!s) return '';
+      return String(s).toLowerCase().replace(/[()（）\s_\-]/g, '');
+    }
+
+    // 純線性等比映射 (上限 200%)
+    function calcPiecewiseScore(ratio) {
+      if (!ratio || ratio <= 0) return 0;
+      var maxCap = 2.0;
+      var score = ratio / maxCap;
+      if (score > 1.0) score = 1.0;
+      return Number(score.toFixed(3));
+    }
+
+    function formatValue(key, numVal, textVal) {
+      var k = cleanStr(key);
+      if (k.indexOf('pdsch4t') >= 0 || k.indexOf('uepscell') >= 0) {
+        var num = parseFloat(numVal);
+        if (!isNaN(num)) {
+          return (num / 1000000).toFixed(2) + ' 百萬次';
+        }
+      }
+      return textVal;
+    }
+
+    function updateAllRadars(sumdata) {
+      if (!sumdata || !sumdata.data || sumdata.data.length === 0) {
+        statusBar.innerText = '[警告] Radar_Data_Feed 內無資料，請檢查篩選器。';
+        return;
+      }
+
+      var nameIdx = -1;
+      var valIdx = -1;
+      var siteIdx = -1;
+      var devIdx = -1;
+      var dimIndices = [];
+
+      for (var c = 0; c < sumdata.columns.length; c++) {
+        var fn = sumdata.columns[c].fieldName.toLowerCase();
+        if (fn.indexOf('measure name') >= 0 || fn.indexOf('度量名稱') >= 0) {
+          nameIdx = c;
+        } else if (fn.indexOf('measure value') >= 0 || fn.indexOf('度量值') >= 0 || fn.indexOf('sum') >= 0 || fn.indexOf('agg') >= 0) {
+          valIdx = c;
+        } else {
+          dimIndices.push(c);
+          if (fn.indexOf('基站') >= 0 || fn.indexOf('site') >= 0) {
+            siteIdx = c;
+          } else {
+            devIdx = c;
+          }
+        }
+      }
+
+      if (siteIdx === -1 && devIdx === -1) {
+        if (dimIndices.length === 1) devIdx = dimIndices[0];
+        else if (dimIndices.length >= 2) { siteIdx = dimIndices[0]; devIdx = dimIndices[1]; }
+      } else if (siteIdx === -1 && dimIndices.length >= 2) {
+        for (var d = 0; d < dimIndices.length; d++) {
+          if (dimIndices[d] !== devIdx) { siteIdx = dimIndices[d]; break; }
+        }
+      } else if (devIdx === -1 && dimIndices.length >= 2) {
+        for (var d = 0; d < dimIndices.length; d++) {
+          if (dimIndices[d] !== siteIdx) { devIdx = dimIndices[d]; break; }
+        }
+      }
+
+      var thresholds = {};
+      var devices = {};
+
+      for (var r = 0; r < sumdata.data.length; r++) {
+        var row = sumdata.data[r];
+        var rawName = (nameIdx >= 0 && row[nameIdx]) ? String(row[nameIdx].formattedValue).trim() : '';
+        var rawVal = (valIdx >= 0 && row[valIdx]) ? row[valIdx].value : 0;
+        var textVal = (valIdx >= 0 && row[valIdx]) ? String(row[valIdx].formattedValue || '') : '0';
+        var numVal = (rawVal !== null && !isNaN(rawVal)) ? parseFloat(rawVal) : 0;
+
+        var rowSite = (siteIdx >= 0 && row[siteIdx]) ? String(row[siteIdx].formattedValue).trim() : '';
+        var rowDev = (devIdx >= 0 && row[devIdx]) ? String(row[devIdx].formattedValue).trim() : '';
+
+        if (rowSite === 'NULL') rowSite = '';
+        if (rowDev === 'NULL') rowDev = '';
+        if (!rawName) continue;
+
+        var fullDeviceName = '';
+        if (rowSite && rowDev && rowSite !== rowDev) {
+          fullDeviceName = rowSite + ' - ' + rowDev;
+        } else if (rowSite) {
+          fullDeviceName = rowSite;
+        } else if (rowDev) {
+          fullDeviceName = rowDev;
+        } else {
+          fullDeviceName = '本站設備';
+        }
+
+        var dataObj = { num: numVal, text: formatValue(rawName, numVal, textVal) };
+
+        if (rawName.indexOf('門檻_') === 0) {
+          var cleanKey = cleanStr(rawName.replace('門檻_', ''));
+          thresholds[cleanKey] = dataObj;
+        } else {
+          var cleanKey2 = cleanStr(rawName);
+          if (!devices[fullDeviceName]) devices[fullDeviceName] = {};
+          devices[fullDeviceName][cleanKey2] = dataObj;
+        }
+      }
+
+      var devNames = Object.keys(devices);
+      statusBar.innerText = '[成功] 已載入資料！基站/設備：' + devNames.join('、');
+
+      var l1 = {
+        title: 'Layer 1 4G Anchor Health',
+        indicators: [
+          { name: 'Avg CA capab\nUEs DL', match: ['avgcacap'] },
+          { name: 'Avg UEs\nEN-DC', match: ['avguesen'] },
+          { name: 'RRC conn\nUE cells', match: ['rrcconn'] }
+        ]
+      };
+
+      var l2 = {
+        title: 'Layer 2 5G 本身品質',
+        indicators: [
+          { name: 'PDSCH_4TX\nRI_02', match: ['pdsch4t'] },
+          { name: 'MAC cell\nthp PDSCH', match: ['maccellthp'] },
+          { name: 'PRB util\nPDSCH', match: ['prbutil'] },
+          { name: 'NSA Avg\nnr user', match: ['nsaavgnr'] },
+          { name: 'UE_PSCELL\nACT_SCELL', match: ['uepscell'] }
+        ]
+      };
+
+      var l3 = {
+        title: 'Layer 3 使用率與流量',
+        indicators: [
+          { name: 'ENB_LOAD\nACT_UE_AVG', match: ['enbload'] },
+          { name: 'Avg UEs\nEN-DC', match: ['avguesen'] },
+          { name: 'NSA Avg\nnr user', match: ['nsaavgnr'] },
+          { name: '5G DL Traffic\nAchievement', match: ['5gdltraff', 'trafficac'] },
+          { name: '5G TOR', match: ['tor', '5gtor', 'trafficoffloa'] }
+        ]
+      };
+
+      renderRadar(chartL1, l1, devices, thresholds);
+      renderRadar(chartL2, l2, devices, thresholds);
+      renderRadar(chartL3, l3, devices, thresholds);
+    }
+
+    function findMetric(mapObj, matchKeywords) {
+      if (!mapObj) return { num: 0, text: '-' };
+      for (var k in mapObj) {
+        for (var i = 0; i < matchKeywords.length; i++) {
+          if (k.indexOf(matchKeywords[i]) >= 0) {
+            return mapObj[k];
+          }
+        }
+      }
+      return { num: 0, text: '-' };
+    }
+
+    function renderRadar(chart, cfg, devices, thresholds) {
+      var devColors = ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#13c2c2'];
+      var seriesData = [];
+      var rawDisplayMap = {};
+
+      var thrValues = [];
+      var thrTexts = [];
+      for (var t = 0; t < cfg.indicators.length; t++) {
+        thrValues.push(0.5);
+        var thrItem = findMetric(thresholds, cfg.indicators[t].match);
+        thrTexts.push({ act: thrItem.text, thr: thrItem.text });
+      }
+
+      rawDisplayMap['標準門檻 (中位數 100%)'] = thrTexts;
+
+      seriesData.push({
+        name: '標準門檻 (中位數 100%)',
+        value: thrValues,
+        symbol: 'none',
+        itemStyle: { color: '#ff4d4f' },
+        lineStyle: { type: 'dashed', color: '#ff4d4f', width: 2 }
+      });
+
+      var devIdx = 0;
+      for (var dev in devices) {
+        var scores = [];
+        rawDisplayMap[dev] = [];
+        var currentColor = devColors[devIdx % devColors.length];
+
+        for (var ind = 0; ind < cfg.indicators.length; ind++) {
+          var actMetric = findMetric(devices[dev], cfg.indicators[ind].match);
+          var thrMetric = findMetric(thresholds, cfg.indicators[ind].match);
+
+          var rawRatio = 0;
+          if (thrMetric.num && thrMetric.num > 0) {
+            rawRatio = actMetric.num / thrMetric.num;
+          }
+
+          rawDisplayMap[dev].push({
+            act: actMetric.text,
+            thr: thrMetric.text,
+            ratio: (rawRatio * 100).toFixed(0) + '%'
+          });
+
+          scores.push(calcPiecewiseScore(rawRatio));
+        }
+
+        seriesData.push({
+          name: dev,
+          value: scores,
+          symbol: 'circle',
+          symbolSize: 4,
+          itemStyle: { color: currentColor },
+          lineStyle: { color: currentColor, width: 2 },
+          areaStyle: { color: 'transparent' }
+        });
+        devIdx++;
+      }
+
+      var indicatorConfigs = [];
+      for (var m = 0; m < cfg.indicators.length; m++) {
+        indicatorConfigs.push({ name: cfg.indicators[m].name, max: 1.0 });
+      }
+
+      var option = {
+        title: { text: cfg.title, left: 'center', top: 4, textStyle: { fontSize: 13, fontWeight: 'bold' } },
+        tooltip: {
+          trigger: 'item',
+          confine: true,
+          backgroundColor: 'rgba(255, 255, 255, 0.98)',
+          borderColor: '#ddd',
+          borderWidth: 1,
+          padding: [6, 10],
+          extraCssText: 'box-shadow: 0 4px 12px rgba(0,0,0,0.12); border-radius: 6px;',
+          textStyle: { color: '#333', fontSize: 11 },
+          formatter: function(params) {
+            var targetName = params.name;
+            var isThr = (targetName.indexOf('標準門檻') >= 0);
+            var devData = rawDisplayMap[targetName] || [];
+
+            var res = '<div style="font-weight:bold;margin-bottom:4px;border-bottom:1px solid #eee;padding-bottom:2px;font-size:12px;">' + targetName + '</div>';
+
+            for (var i = 0; i < cfg.indicators.length; i++) {
+              var cleanName = cfg.indicators[i].name.replace('\n', ' ');
+              var item = devData[i] || { act: '-', thr: '-', ratio: '-' };
+
+              if (isThr) {
+                res += cleanName + ' (門檻): <b>' + item.thr + '</b><br/>';
+              } else {
+                res += cleanName + ': <b>' + item.act + '</b> <span style="color:#777;font-size:10px;">(門檻: ' + item.thr + '，' + item.ratio + ')</span><br/>';
+              }
+            }
+            return res;
+          }
+        },
+        legend: {
+          bottom: 4,
+          type: 'scroll',
+          textStyle: { fontSize: 11 }
+        },
+        radar: {
+          indicator: indicatorConfigs,
+          shape: 'polygon',
+          center: ['50%', '52%'],
+          radius: '55%',
+          splitNumber: 4,
+          axisName: {
+            color: '#333',
+            fontSize: 10,
+            lineHeight: 12,
+            overflow: 'break',
+            width: 65
+          },
+          splitArea: { show: true, areaStyle: { color: ['#ffffff', '#f8fafc'] } }
+        },
+        series: [{ type: 'radar', data: seriesData }]
+      };
+
+      chart.setOption(option, true);
+    }
+
+    window.onresize = function() {
+      chartL1.resize();
+      chartL2.resize();
+      chartL3.resize();
+    };
+  </script>
+</body>
+</html>
