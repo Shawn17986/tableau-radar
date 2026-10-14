@@ -63,6 +63,7 @@
       }
 
       function render() {
+        // 直接讀取工作表數據，不依賴全域 Filter 字串
         feedSheet.getSummaryDataAsync().then(function(sumdata) {
           updateAllRadars(sumdata);
         }).catch(function(err) {
@@ -119,6 +120,7 @@
       var devIdx = -1;
       var dimIndices = [];
 
+      // 自動解析各欄位角色
       for (var c = 0; c < sumdata.columns.length; c++) {
         var fn = sumdata.columns[c].fieldName.toLowerCase();
         if (fn.indexOf('measure name') >= 0 || fn.indexOf('度量名稱') >= 0) {
@@ -135,6 +137,7 @@
         }
       }
 
+      // 若未精確匹配到關鍵字，自動分配維度索引
       if (siteIdx === -1 && devIdx === -1) {
         if (dimIndices.length === 1) devIdx = dimIndices[0];
         else if (dimIndices.length >= 2) { siteIdx = dimIndices[0]; devIdx = dimIndices[1]; }
@@ -158,6 +161,7 @@
         var textVal = (valIdx >= 0 && row[valIdx]) ? String(row[valIdx].formattedValue || '') : '0';
         var numVal = (rawVal !== null && !isNaN(rawVal)) ? parseFloat(rawVal) : 0;
 
+        // 【核心修正】：每一列單獨抓取自己那一行的基站名與設備號
         var rowSite = (siteIdx >= 0 && row[siteIdx]) ? String(row[siteIdx].formattedValue).trim() : '';
         var rowDev = (devIdx >= 0 && row[devIdx]) ? String(row[devIdx].formattedValue).trim() : '';
 
@@ -189,7 +193,7 @@
       }
 
       var devNames = Object.keys(devices);
-      statusBar.innerText = '[成功] 已載入資料！基站/設備：' + devNames.join('、');
+      statusBar.innerText = '【基站 - 設備】：' + devNames.join('、');
 
       var l1 = {
         title: 'Layer 1 4G Anchor Health',
