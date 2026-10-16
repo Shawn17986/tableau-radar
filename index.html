@@ -198,9 +198,9 @@
       var l1 = {
         title: 'Layer 1 4G Anchor Health',
         indicators: [
-          { name: 'Avg CA capab\nUEs DL', match: ['avgcacap'] },
+          { name: 'RRC conn\nUE cells', match: ['rrcconn'] },
           { name: 'Avg UEs\nEN-DC', match: ['avguesen'] },
-          { name: 'RRC conn\nUE cells', match: ['rrcconn'] }
+          { name: 'Avg CA capab\nUEs DL', match: ['avgcacap'] }
         ]
       };
 
@@ -208,10 +208,10 @@
         title: 'Layer 2 5G 本身品質',
         indicators: [
           { name: 'PDSCH_4TX\nRI_02', match: ['pdsch4t'] },
-          { name: 'MAC cell\nthp PDSCH', match: ['maccellthp'] },
-          { name: 'PRB util\nPDSCH', match: ['prbutil'] },
+          { name: 'UE_PSCELL\nACT_SCELL', match: ['uepscell'] },
           { name: 'NSA Avg\nnr user', match: ['nsaavgnr'] },
-          { name: 'UE_PSCELL\nACT_SCELL', match: ['uepscell'] }
+          { name: 'PRB util\nPDSCH', match: ['prbutil'] },
+          { name: 'MAC cell\nthp PDSCH', match: ['maccellthp'] }
         ]
       };
 
@@ -219,10 +219,10 @@
         title: 'Layer 3 使用率與流量',
         indicators: [
           { name: 'ENB_LOAD\nACT_UE_AVG', match: ['enbload'] },
-          { name: 'Avg UEs\nEN-DC', match: ['avguesen'] },
-          { name: 'NSA Avg\nnr user', match: ['nsaavgnr'] },
           { name: '5G DL Traffic\nAchievement', match: ['5gdltraff', 'trafficac'] },
-          { name: '5G TOR', match: ['tor', '5gtor', 'trafficoffloa'] }
+          { name: '5G TOR', match: ['tor', '5gtor', 'trafficoffloa'] },
+          { name: 'NSA Avg\nnr user', match: ['nsaavgnr'] },
+          { name: 'Avg UEs\nEN-DC', match: ['avguesen'] }
         ]
       };
 
