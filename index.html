@@ -264,10 +264,10 @@
         ]
       };
 
-      // 【關鍵優化】：各圖層指派互不重複的專屬調色盤
-      var colorsL1 = ['#1890ff', '#13c2c2', '#2f54eb', '#0050b3', '#003a8c']; // 藍青色系 (4G)
-      var colorsL2 = ['#722ed1', '#eb2f96', '#9254de', '#f759ab', '#531dab']; // 紫粉色系 (5G)
-      var colorsL3 = ['#fa8c16', '#faad14', '#52c41a', '#d46b08', '#389e0d']; // 橘金色系 (使用率與流量)
+      // 各圖層指派互不重複的高對比專屬調色盤
+      var colorsL1 = ['#1890ff', '#13c2c2', '#2f54eb', '#0050b3', '#003a8c']; // 科技藍青 (4G)
+      var colorsL2 = ['#722ed1', '#eb2f96', '#9254de', '#f759ab', '#531dab']; // 未來紫粉 (5G)
+      var colorsL3 = ['#fa8c16', '#389e0d', '#595959', '#d46b08', '#08979c']; // 活力橘 ＋ 森林深綠 ＋ 石板灰 (高對比)
 
       renderRadar(chartL1, l1, devices_l1, thresholds, colorsL1);
       renderRadar(chartL2, l2, devices_l2, thresholds, colorsL2);
