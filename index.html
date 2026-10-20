@@ -63,7 +63,6 @@
       }
 
       function render() {
-        // 直接讀取工作表數據，不依賴全域 Filter 字串
         feedSheet.getSummaryDataAsync().then(function(sumdata) {
           updateAllRadars(sumdata);
         }).catch(function(err) {
@@ -117,7 +116,8 @@
       var nameIdx = -1;
       var valIdx = -1;
       var siteIdx = -1;
-      var devIdx = -1;
+      var lnbtsIdx = -1;
+      var nrbtsIdx = -1;
       var dimIndices = [];
 
       // 自動解析各欄位角色
@@ -129,30 +129,41 @@
           valIdx = c;
         } else {
           dimIndices.push(c);
-          if (fn.indexOf('基站') >= 0 || fn.indexOf('site') >= 0) {
+          if (fn.indexOf('lnbts') >= 0 || fn.indexOf('4g') >= 0) {
+            lnbtsIdx = c;
+          } else if (fn.indexOf('nrbts') >= 0 || fn.indexOf('5g') >= 0) {
+            nrbtsIdx = c;
+          } else if (fn.indexOf('基站') >= 0 || fn.indexOf('site') >= 0) {
             siteIdx = c;
-          } else {
-            devIdx = c;
           }
         }
       }
 
-      // 若未精確匹配到關鍵字，自動分配維度索引
-      if (siteIdx === -1 && devIdx === -1) {
-        if (dimIndices.length === 1) devIdx = dimIndices[0];
-        else if (dimIndices.length >= 2) { siteIdx = dimIndices[0]; devIdx = dimIndices[1]; }
-      } else if (siteIdx === -1 && dimIndices.length >= 2) {
-        for (var d = 0; d < dimIndices.length; d++) {
-          if (dimIndices[d] !== devIdx) { siteIdx = dimIndices[d]; break; }
-        }
-      } else if (devIdx === -1 && dimIndices.length >= 2) {
-        for (var d = 0; d < dimIndices.length; d++) {
-          if (dimIndices[d] !== siteIdx) { devIdx = dimIndices[d]; break; }
+      // 相容性回退機制
+      var remainingDims = [];
+      for (var d = 0; d < dimIndices.length; d++) {
+        var idx = dimIndices[d];
+        if (idx !== siteIdx && idx !== lnbtsIdx && idx !== nrbtsIdx) {
+          remainingDims.push(idx);
         }
       }
 
+      if (siteIdx === -1 && remainingDims.length > 0) siteIdx = remainingDims.shift();
+      if (lnbtsIdx === -1 && remainingDims.length > 0) lnbtsIdx = remainingDims.shift();
+      if (nrbtsIdx === -1 && remainingDims.length > 0) nrbtsIdx = remainingDims.shift();
+
+      // 若僅單一設備欄位，自動讓 4G 與 5G 共用
+      if (lnbtsIdx !== -1 && nrbtsIdx === -1) nrbtsIdx = lnbtsIdx;
+      if (nrbtsIdx !== -1 && lnbtsIdx === -1) lnbtsIdx = nrbtsIdx;
+
       var thresholds = {};
-      var devices = {};
+      var devices_l1 = {};
+      var devices_l2 = {};
+      var devices_l3 = {};
+
+      var siteNamesSet = {};
+      var lnbtsSet = {};
+      var nrbtsSet = {};
 
       for (var r = 0; r < sumdata.data.length; r++) {
         var row = sumdata.data[r];
@@ -161,24 +172,18 @@
         var textVal = (valIdx >= 0 && row[valIdx]) ? String(row[valIdx].formattedValue || '') : '0';
         var numVal = (rawVal !== null && !isNaN(rawVal)) ? parseFloat(rawVal) : 0;
 
-        // 【核心修正】：每一列單獨抓取自己那一行的基站名與設備號
         var rowSite = (siteIdx >= 0 && row[siteIdx]) ? String(row[siteIdx].formattedValue).trim() : '';
-        var rowDev = (devIdx >= 0 && row[devIdx]) ? String(row[devIdx].formattedValue).trim() : '';
+        var rowLnbts = (lnbtsIdx >= 0 && row[lnbtsIdx]) ? String(row[lnbtsIdx].formattedValue).trim() : '';
+        var rowNrbts = (nrbtsIdx >= 0 && row[nrbtsIdx]) ? String(row[nrbtsIdx].formattedValue).trim() : '';
 
         if (rowSite === 'NULL') rowSite = '';
-        if (rowDev === 'NULL') rowDev = '';
+        if (rowLnbts === 'NULL') rowLnbts = '';
+        if (rowNrbts === 'NULL') rowNrbts = '';
         if (!rawName) continue;
 
-        var fullDeviceName = '';
-        if (rowSite && rowDev && rowSite !== rowDev) {
-          fullDeviceName = rowSite + ' - ' + rowDev;
-        } else if (rowSite) {
-          fullDeviceName = rowSite;
-        } else if (rowDev) {
-          fullDeviceName = rowDev;
-        } else {
-          fullDeviceName = '本站設備';
-        }
+        if (rowSite) siteNamesSet[rowSite] = true;
+        if (rowLnbts) lnbtsSet[rowLnbts] = true;
+        if (rowNrbts) nrbtsSet[rowNrbts] = true;
 
         var dataObj = { num: numVal, text: formatValue(rawName, numVal, textVal) };
 
@@ -187,13 +192,49 @@
           thresholds[cleanKey] = dataObj;
         } else {
           var cleanKey2 = cleanStr(rawName);
-          if (!devices[fullDeviceName]) devices[fullDeviceName] = {};
-          devices[fullDeviceName][cleanKey2] = dataObj;
+
+          // 1. Layer 1 (4G) 專屬設備主體
+          var k1 = rowLnbts || (rowSite ? (rowSite + ' 4G') : '4G 設備');
+          if (!devices_l1[k1]) devices_l1[k1] = {};
+          devices_l1[k1][cleanKey2] = dataObj;
+
+          // 2. Layer 2 (5G) 專屬設備主體 (自動去重)
+          var k2 = rowNrbts || (rowSite ? (rowSite + ' 5G') : '5G 設備');
+          if (!devices_l2[k2]) devices_l2[k2] = {};
+          devices_l2[k2][cleanKey2] = dataObj;
+
+          // 3. Layer 3 (混合指標) 選項 A：簡潔斜線式 (LN / NR)
+          var shortNr = rowNrbts;
+          var nrPos = rowNrbts.indexOf('NR');
+          if (nrPos >= 0) {
+            shortNr = rowNrbts.substring(nrPos);
+          }
+
+          var k3 = '';
+          if (rowLnbts && shortNr) {
+            k3 = rowLnbts + ' / ' + shortNr;
+          } else if (rowLnbts) {
+            k3 = rowLnbts;
+          } else if (shortNr) {
+            k3 = shortNr;
+          } else {
+            k3 = rowSite || '本站組合';
+          }
+          if (!devices_l3[k3]) devices_l3[k3] = {};
+          devices_l3[k3][cleanKey2] = dataObj;
         }
       }
 
-      var devNames = Object.keys(devices);
-      statusBar.innerText = '【基站 - 設備】：' + devNames.join('、');
+      // 產生頂部拓撲狀態列
+      var siteNames = Object.keys(siteNamesSet);
+      var lnbtsNames = Object.keys(lnbtsSet);
+      var nrbtsNames = Object.keys(nrbtsSet);
+
+      var siteStr = siteNames.length > 0 ? ('【' + siteNames.join('、') + '】') : '【基站】';
+      var text4G = '4G 設備 (' + lnbtsNames.length + ' 台)：' + (lnbtsNames.length > 0 ? lnbtsNames.join('、') : '無');
+      var text5G = '5G 設備 (' + nrbtsNames.length + ' 台)：' + (nrbtsNames.length > 0 ? nrbtsNames.join('、') : '無');
+
+      statusBar.innerText = siteStr + ' ' + text4G + ' ｜ ' + text5G;
 
       var l1 = {
         title: 'Layer 1 4G Anchor Health',
@@ -226,9 +267,10 @@
         ]
       };
 
-      renderRadar(chartL1, l1, devices, thresholds);
-      renderRadar(chartL2, l2, devices, thresholds);
-      renderRadar(chartL3, l3, devices, thresholds);
+      // 各圖層分別吃解耦後的專屬設備清單
+      renderRadar(chartL1, l1, devices_l1, thresholds);
+      renderRadar(chartL2, l2, devices_l2, thresholds);
+      renderRadar(chartL3, l3, devices_l3, thresholds);
     }
 
     function findMetric(mapObj, matchKeywords) {
@@ -244,7 +286,7 @@
     }
 
     function renderRadar(chart, cfg, devices, thresholds) {
-      var devColors = ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#13c2c2'];
+      var devColors = ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#13c2c2', '#eb2f96', '#2f54eb'];
       var seriesData = [];
       var rawDisplayMap = {};
 
@@ -255,17 +297,9 @@
         var thrItem = findMetric(thresholds, cfg.indicators[t].match);
         thrTexts.push({ act: thrItem.text, thr: thrItem.text });
       }
-
       rawDisplayMap['標準門檻 (中位數 100%)'] = thrTexts;
 
-      seriesData.push({
-        name: '標準門檻 (中位數 100%)',
-        value: thrValues,
-        symbol: 'none',
-        itemStyle: { color: '#ff4d4f' },
-        lineStyle: { type: 'dashed', color: '#ff4d4f', width: 2 }
-      });
-
+      // 【1. 先加入觀察設備（圖標排在前方）】
       var devIdx = 0;
       for (var dev in devices) {
         var scores = [];
@@ -302,6 +336,15 @@
         devIdx++;
       }
 
+      // 【2. 最後加入標準門檻（圖標排在末端，置頂不被覆蓋）】
+      seriesData.push({
+        name: '標準門檻 (中位數 100%)',
+        value: thrValues,
+        symbol: 'none',
+        itemStyle: { color: '#ff4d4f' },
+        lineStyle: { type: 'dashed', color: '#ff4d4f', width: 2 }
+      });
+
       var indicatorConfigs = [];
       for (var m = 0; m < cfg.indicators.length; m++) {
         indicatorConfigs.push({ name: cfg.indicators[m].name, max: 1.0 });
@@ -325,7 +368,14 @@
 
             var res = '<div style="font-weight:bold;margin-bottom:4px;border-bottom:1px solid #eee;padding-bottom:2px;font-size:12px;">' + targetName + '</div>';
 
-            for (var i = 0; i < cfg.indicators.length; i++) {
+            // 順時針依序條列指標
+            var clockwiseOrder = [0];
+            for (var k = cfg.indicators.length - 1; k >= 1; k--) {
+              clockwiseOrder.push(k);
+            }
+
+            for (var c = 0; c < clockwiseOrder.length; c++) {
+              var i = clockwiseOrder[c];
               var cleanName = cfg.indicators[i].name.replace('\n', ' ');
               var item = devData[i] || { act: '-', thr: '-', ratio: '-' };
 
