@@ -120,7 +120,6 @@
       var nrbtsIdx = -1;
       var dimIndices = [];
 
-      // 自動解析各欄位角色
       for (var c = 0; c < sumdata.columns.length; c++) {
         var fn = sumdata.columns[c].fieldName.toLowerCase();
         if (fn.indexOf('measure name') >= 0 || fn.indexOf('度量名稱') >= 0) {
@@ -139,7 +138,6 @@
         }
       }
 
-      // 相容性回退機制
       var remainingDims = [];
       for (var d = 0; d < dimIndices.length; d++) {
         var idx = dimIndices[d];
@@ -152,7 +150,6 @@
       if (lnbtsIdx === -1 && remainingDims.length > 0) lnbtsIdx = remainingDims.shift();
       if (nrbtsIdx === -1 && remainingDims.length > 0) nrbtsIdx = remainingDims.shift();
 
-      // 若僅單一設備欄位，自動讓 4G 與 5G 共用
       if (lnbtsIdx !== -1 && nrbtsIdx === -1) nrbtsIdx = lnbtsIdx;
       if (nrbtsIdx !== -1 && lnbtsIdx === -1) lnbtsIdx = nrbtsIdx;
 
@@ -193,17 +190,17 @@
         } else {
           var cleanKey2 = cleanStr(rawName);
 
-          // 1. Layer 1 (4G) 專屬設備主體
+          // Layer 1 (4G 設備)
           var k1 = rowLnbts || (rowSite ? (rowSite + ' 4G') : '4G 設備');
           if (!devices_l1[k1]) devices_l1[k1] = {};
           devices_l1[k1][cleanKey2] = dataObj;
 
-          // 2. Layer 2 (5G) 專屬設備主體 (自動去重)
+          // Layer 2 (5G 設備 - 去重)
           var k2 = rowNrbts || (rowSite ? (rowSite + ' 5G') : '5G 設備');
           if (!devices_l2[k2]) devices_l2[k2] = {};
           devices_l2[k2][cleanKey2] = dataObj;
 
-          // 3. Layer 3 (混合指標) 選項 A：簡潔斜線式 (LN / NR)
+          // Layer 3 (混合 - LN / NR)
           var shortNr = rowNrbts;
           var nrPos = rowNrbts.indexOf('NR');
           if (nrPos >= 0) {
@@ -225,7 +222,7 @@
         }
       }
 
-      // 產生頂部拓撲狀態列
+      // 拓撲狀態列
       var siteNames = Object.keys(siteNamesSet);
       var lnbtsNames = Object.keys(lnbtsSet);
       var nrbtsNames = Object.keys(nrbtsSet);
@@ -267,10 +264,14 @@
         ]
       };
 
-      // 各圖層分別吃解耦後的專屬設備清單
-      renderRadar(chartL1, l1, devices_l1, thresholds);
-      renderRadar(chartL2, l2, devices_l2, thresholds);
-      renderRadar(chartL3, l3, devices_l3, thresholds);
+      // 【關鍵優化】：各圖層指派互不重複的專屬調色盤
+      var colorsL1 = ['#1890ff', '#13c2c2', '#2f54eb', '#0050b3', '#003a8c']; // 藍青色系 (4G)
+      var colorsL2 = ['#722ed1', '#eb2f96', '#9254de', '#f759ab', '#531dab']; // 紫粉色系 (5G)
+      var colorsL3 = ['#fa8c16', '#faad14', '#52c41a', '#d46b08', '#389e0d']; // 橘金色系 (使用率與流量)
+
+      renderRadar(chartL1, l1, devices_l1, thresholds, colorsL1);
+      renderRadar(chartL2, l2, devices_l2, thresholds, colorsL2);
+      renderRadar(chartL3, l3, devices_l3, thresholds, colorsL3);
     }
 
     function findMetric(mapObj, matchKeywords) {
@@ -285,8 +286,8 @@
       return { num: 0, text: '-' };
     }
 
-    function renderRadar(chart, cfg, devices, thresholds) {
-      var devColors = ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#13c2c2', '#eb2f96', '#2f54eb'];
+    function renderRadar(chart, cfg, devices, thresholds, customColors) {
+      var devColors = customColors || ['#1890ff', '#52c41a', '#fa8c16', '#722ed1', '#13c2c2'];
       var seriesData = [];
       var rawDisplayMap = {};
 
@@ -299,7 +300,7 @@
       }
       rawDisplayMap['標準門檻 (中位數 100%)'] = thrTexts;
 
-      // 【1. 先加入觀察設備（圖標排在前方）】
+      // 1. 觀察設備線條（依專屬色盤分派顏色）
       var devIdx = 0;
       for (var dev in devices) {
         var scores = [];
@@ -336,7 +337,7 @@
         devIdx++;
       }
 
-      // 【2. 最後加入標準門檻（圖標排在末端，置頂不被覆蓋）】
+      // 2. 標準門檻線條（固定紅色虛線，排在圖例末端）
       seriesData.push({
         name: '標準門檻 (中位數 100%)',
         value: thrValues,
@@ -368,7 +369,6 @@
 
             var res = '<div style="font-weight:bold;margin-bottom:4px;border-bottom:1px solid #eee;padding-bottom:2px;font-size:12px;">' + targetName + '</div>';
 
-            // 順時針依序條列指標
             var clockwiseOrder = [0];
             for (var k = cfg.indicators.length - 1; k >= 1; k--) {
               clockwiseOrder.push(k);
